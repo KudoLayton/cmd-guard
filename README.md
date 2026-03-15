@@ -35,10 +35,10 @@ Stage 2 (nushell): ls, where  →  allowlist check
 ### 1. Install
 
 ```sh
-cargo install --path .
+cargo install --git https://github.com/KudoLayton/cmd-guard
 ```
 
-This installs `cmd-guard` to `~/.cargo/bin/`. Alternatively, build without installing:
+This installs `cmd-guard` to `~/.cargo/bin/`. Alternatively, clone and build locally:
 
 ```sh
 cargo build --release
