@@ -32,7 +32,13 @@ Stage 2 (nushell): ls, where  →  allowlist check
 
 ## Setup
 
-### 1. Build
+### 1. Install
+
+```sh
+cargo install --path .
+```
+
+This installs `cmd-guard` to `~/.cargo/bin/`. Alternatively, build without installing:
 
 ```sh
 cargo build --release
@@ -86,7 +92,7 @@ Add to `~/.claude/settings.json`:
         "hooks": [
           {
             "type": "command",
-            "command": "/path/to/cmd-guard.exe",
+            "command": "cmd-guard",
             "timeout": 5
           }
         ]
