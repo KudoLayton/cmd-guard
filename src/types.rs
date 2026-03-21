@@ -94,5 +94,7 @@ pub struct AllowEntry {
     #[serde(default)]
     pub sub: Vec<String>,
     #[serde(default)]
+    pub deny_sub: Vec<String>,
+    #[serde(default)]
     pub deny_pattern: Vec<String>,
 }

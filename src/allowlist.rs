@@ -1,38 +1,75 @@
+use std::collections::HashSet;
 use std::path::PathBuf;
 
 use regex::Regex;
 
 use crate::types::{AllowEntry, AllowlistConfig, ParsedCommand};
 
-/// Load allowlist config from the first available location:
-/// 1. Project `.claude/cmd-guard.toml`
-/// 2. User `~/.claude/cmd-guard.toml`
+/// Load and merge allowlist configs from both locations:
+/// - User `~/.claude/cmd-guard.toml` (global base)
+/// - Project `.claude/cmd-guard.toml` (project override/restriction)
+///
+/// Merge strategy: field-level union for overlapping command keys.
+/// `deny_sub` allows project config to block subcommands allowed by user config.
 pub fn load_config() -> AllowlistConfig {
-    let candidates = config_paths();
-    for path in candidates {
-        if path.exists() {
-            if let Ok(content) = std::fs::read_to_string(&path) {
-                if let Ok(config) = toml::from_str::<AllowlistConfig>(&content) {
-                    return config;
-                }
-            }
-        }
-    }
-    AllowlistConfig::default()
+    let (project_path, user_path) = config_paths();
+    let project = load_from_path(project_path);
+    let user = load_from_path(user_path);
+    merge_configs(project, user)
 }
 
-fn config_paths() -> Vec<PathBuf> {
-    let mut paths = Vec::new();
+fn config_paths() -> (Option<PathBuf>, Option<PathBuf>) {
+    let project = std::env::current_dir()
+        .ok()
+        .map(|cwd| cwd.join(".claude").join("cmd-guard.toml"));
+    let user = dirs::home_dir().map(|home| home.join(".claude").join("cmd-guard.toml"));
+    (project, user)
+}
 
-    if let Ok(cwd) = std::env::current_dir() {
-        paths.push(cwd.join(".claude").join("cmd-guard.toml"));
+fn load_from_path(path: Option<PathBuf>) -> Option<AllowlistConfig> {
+    let path = path?;
+    let content = std::fs::read_to_string(path).ok()?;
+    toml::from_str(&content).ok()
+}
+
+fn merge_configs(
+    project: Option<AllowlistConfig>,
+    user: Option<AllowlistConfig>,
+) -> AllowlistConfig {
+    match (project, user) {
+        (None, None) => AllowlistConfig::default(),
+        (Some(c), None) | (None, Some(c)) => c,
+        (Some(project), Some(user)) => {
+            let all_keys: HashSet<&String> =
+                project.allow.keys().chain(user.allow.keys()).collect();
+            let mut merged = std::collections::HashMap::new();
+            for key in all_keys {
+                let entry = match (project.allow.get(key), user.allow.get(key)) {
+                    (Some(p), Some(u)) => merge_entries(p, u),
+                    (Some(e), None) | (None, Some(e)) => e.clone(),
+                    (None, None) => unreachable!(),
+                };
+                merged.insert(key.clone(), entry);
+            }
+            AllowlistConfig { allow: merged }
+        }
     }
+}
 
-    if let Some(home) = dirs::home_dir() {
-        paths.push(home.join(".claude").join("cmd-guard.toml"));
+fn merge_entries(a: &AllowEntry, b: &AllowEntry) -> AllowEntry {
+    AllowEntry {
+        sub: union(&a.sub, &b.sub),
+        deny_sub: union(&a.deny_sub, &b.deny_sub),
+        deny_pattern: union(&a.deny_pattern, &b.deny_pattern),
     }
+}
 
-    paths
+fn union(a: &[String], b: &[String]) -> Vec<String> {
+    let mut set: HashSet<String> = a.iter().cloned().collect();
+    set.extend(b.iter().cloned());
+    let mut result: Vec<String> = set.into_iter().collect();
+    result.sort();
+    result
 }
 
 /// Check if all commands are allowed by the config.
@@ -66,6 +103,17 @@ fn is_not_allowed(cmd: &ParsedCommand, config: &AllowlistConfig) -> Option<Strin
             if re.is_match(&args_str) {
                 return Some(format!("{} (denied: {})", cmd, pattern));
             }
+        }
+    }
+
+    // deny_sub blocks specific subcommands even if listed in sub
+    if let Some(first_arg) = cmd.args.first() {
+        if entry
+            .deny_sub
+            .iter()
+            .any(|s| s.eq_ignore_ascii_case(first_arg))
+        {
+            return Some(format!("{} (denied sub)", cmd));
         }
     }
 
@@ -269,5 +317,113 @@ deny_pattern = ['install\s.*--global', 'install\s.*-g']
         let ls = c.allow.get("ls").unwrap();
         assert!(ls.sub.is_empty());
         assert!(ls.deny_pattern.is_empty());
+    }
+
+    // --- merge_configs tests ---
+
+    fn parse_config(toml_str: &str) -> AllowlistConfig {
+        toml::from_str(toml_str).unwrap()
+    }
+
+    #[test]
+    fn merge_both_none() {
+        let result = merge_configs(None, None);
+        assert!(result.allow.is_empty());
+    }
+
+    #[test]
+    fn merge_project_only() {
+        let project = parse_config("[allow.ls]\n");
+        let result = merge_configs(Some(project), None);
+        assert!(result.allow.contains_key("ls"));
+        assert_eq!(result.allow.len(), 1);
+    }
+
+    #[test]
+    fn merge_user_only() {
+        let user = parse_config("[allow.cargo]\n");
+        let result = merge_configs(None, Some(user));
+        assert!(result.allow.contains_key("cargo"));
+        assert_eq!(result.allow.len(), 1);
+    }
+
+    #[test]
+    fn merge_disjoint_keys() {
+        let project = parse_config("[allow.npm]\nsub = [\"install\"]\n");
+        let user = parse_config("[allow.cargo]\n");
+        let result = merge_configs(Some(project), Some(user));
+        assert!(result.allow.contains_key("npm"));
+        assert!(result.allow.contains_key("cargo"));
+        assert_eq!(result.allow.len(), 2);
+    }
+
+    #[test]
+    fn merge_overlapping_keys_union() {
+        let project = parse_config(
+            "[allow.git]\nsub = [\"diff\", \"log\"]\ndeny_pattern = ['push\\s.*--force']\n",
+        );
+        let user = parse_config("[allow.git]\nsub = [\"diff\", \"commit\"]\n");
+        let result = merge_configs(Some(project), Some(user));
+        let git = result.allow.get("git").unwrap();
+        assert!(git.sub.contains(&"diff".to_string()));
+        assert!(git.sub.contains(&"log".to_string()));
+        assert!(git.sub.contains(&"commit".to_string()));
+        assert!(git.deny_pattern.contains(&r"push\s.*--force".to_string()));
+    }
+
+    #[test]
+    fn merge_deny_sub_union() {
+        let project = parse_config("[allow.git]\ndeny_sub = [\"push\"]\n");
+        let user = parse_config("[allow.git]\nsub = [\"diff\", \"push\"]\ndeny_sub = [\"reset\"]\n");
+        let result = merge_configs(Some(project), Some(user));
+        let git = result.allow.get("git").unwrap();
+        assert!(git.deny_sub.contains(&"push".to_string()));
+        assert!(git.deny_sub.contains(&"reset".to_string()));
+        assert!(git.sub.contains(&"diff".to_string()));
+        assert!(git.sub.contains(&"push".to_string()));
+    }
+
+    #[test]
+    fn merge_integrated_check() {
+        let project = parse_config("[allow.ls]\n[allow.git]\ndeny_sub = [\"push\"]\n");
+        let user = parse_config("[allow.git]\nsub = [\"diff\", \"push\", \"log\"]\n[allow.cargo]\n");
+        let merged = merge_configs(Some(project), Some(user));
+        // ls allowed (from project)
+        assert!(check_commands(&[cmd("ls", &["-la"])], &merged).is_none());
+        // cargo allowed (from user)
+        assert!(check_commands(&[cmd("cargo", &["build"])], &merged).is_none());
+        // git diff allowed (sub from user, not in deny_sub)
+        assert!(check_commands(&[cmd("git", &["diff"])], &merged).is_none());
+        // git push denied (in sub but blocked by deny_sub from project)
+        let denied = check_commands(&[cmd("git", &["push"])], &merged).unwrap();
+        assert!(denied[0].contains("denied sub"));
+        // rm not in either config → denied
+        assert!(check_commands(&[cmd("rm", &["-rf"])], &merged).is_some());
+    }
+
+    // --- deny_sub check tests ---
+
+    #[test]
+    fn deny_sub_blocks_allowed_sub() {
+        let c = parse_config(
+            "[allow.git]\nsub = [\"diff\", \"push\", \"commit\"]\ndeny_sub = [\"push\"]\n",
+        );
+        assert!(check_commands(&[cmd("git", &["diff"])], &c).is_none());
+        let denied = check_commands(&[cmd("git", &["push", "origin"])], &c).unwrap();
+        assert!(denied[0].contains("denied sub"));
+    }
+
+    #[test]
+    fn deny_sub_empty_allows_all() {
+        let c = parse_config("[allow.git]\nsub = [\"diff\", \"push\"]\ndeny_sub = []\n");
+        assert!(check_commands(&[cmd("git", &["diff"])], &c).is_none());
+        assert!(check_commands(&[cmd("git", &["push"])], &c).is_none());
+    }
+
+    #[test]
+    fn deny_sub_case_insensitive() {
+        let c = parse_config("[allow.git]\nsub = [\"Push\"]\ndeny_sub = [\"push\"]\n");
+        let denied = check_commands(&[cmd("git", &["PUSH"])], &c).unwrap();
+        assert!(denied[0].contains("denied sub"));
     }
 }
