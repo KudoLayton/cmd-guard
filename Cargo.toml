@@ -2,6 +2,9 @@
 name = "cmd-guard"
 version = "0.1.0"
 edition = "2021"
+authors = ["KudoLayton"]
+repository = "https://github.com/KudoLayton/cmd-guard"
+license = "Apache-2.0"
 
 [dependencies]
 tree-sitter = "0.25"
