@@ -46,7 +46,7 @@ cargo build --release
 
 ### 2. Configure allowlist
 
-Create `~/.claude/cmd-guard.toml` (user-level) or `.claude/cmd-guard.toml` (project-level):
+Create `~/.claude/cmd-guard.toml` (user-level) and/or `.claude/cmd-guard.toml` (project-level). Both configs are loaded and merged — see [Config merging](#config-merging) below.
 
 ```toml
 # All arguments allowed
@@ -57,6 +57,7 @@ Create `~/.claude/cmd-guard.toml` (user-level) or `.claude/cmd-guard.toml` (proj
 # Subcommand-restricted with deny patterns
 [allow.git]
 sub = ["diff", "log", "status", "push"]
+deny_sub = ["push"]
 deny_pattern = ['push\s.*--force', 'push\s.*-f']
 
 [allow.npm]
@@ -72,12 +73,31 @@ See [`config/allowlist.example.toml`](config/allowlist.example.toml) for a more 
 |--------|---------|
 | `[allow.ls]` (empty section) | Allow command with any arguments |
 | `sub = ["diff", "log"]` | Allow only listed subcommands |
-| `deny_pattern = ['push\s.*--force']` | Deny args matching regex (takes priority over sub) |
+| `deny_sub = ["push"]` | Deny specific subcommands even if listed in `sub` |
+| `deny_pattern = ['push\s.*--force']` | Deny args matching regex |
+
+**Check priority**: `deny_pattern` > `deny_sub` > `sub`
 
 - Commands not in `[allow.*]` trigger a permission prompt (`ask`)
 - Matching is case-insensitive
 - Path prefixes are stripped (`/usr/bin/env` → `env`)
 - `deny_pattern` matches against the full argument string (args joined by spaces)
+
+### Config merging
+
+When both user-level (`~/.claude/cmd-guard.toml`) and project-level (`.claude/cmd-guard.toml`) configs exist, they are merged with field-level union:
+
+- **Disjoint commands**: both sides preserved
+- **Overlapping commands**: `sub`, `deny_sub`, and `deny_pattern` are each combined (union, deduplicated)
+
+This allows a user-level config to define a broad allowlist, while project-level configs can add restrictions via `deny_sub` or add extra commands.
+
+```
+User-level:  git { sub: ["diff", "log", "push"] }
+Project:     git { deny_sub: ["push"] }
+Merged:      git { sub: ["diff", "log", "push"], deny_sub: ["push"] }
+→ git diff ✅  git push ❌
+```
 
 ### 3. Register hook
 
@@ -108,6 +128,7 @@ Add to `~/.claude/settings.json`:
 |----------|--------|
 | All commands in allowlist | `"allow"` — no prompt |
 | Command not in allowlist | `"ask"` — normal permission prompt |
+| Subcommand in `deny_sub` | `"ask"` — with denied sub info in reason |
 | Args match `deny_pattern` | `"ask"` — with pattern info in reason |
 | Parse failure | `"ask"` — safe fallback |
 | Non-Bash tool call | No output — ignored |
