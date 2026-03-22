@@ -1,0 +1,2 @@
+[allow.scoop]
+sub = ["list", "info", "search", "status"]

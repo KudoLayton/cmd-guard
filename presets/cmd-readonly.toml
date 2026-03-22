@@ -1,0 +1,13 @@
+# cmd.exe read-only builtins
+[allow.dir]
+[allow.set]
+[allow.where]
+[allow.echo]
+[allow.ver]
+[allow.vol]
+[allow.assoc]
+[allow.ftype]
+
+# cmd launcher (inner commands parsed via 2-stage)
+[allow.cmd]
+[allow."cmd.exe"]

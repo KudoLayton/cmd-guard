@@ -1,0 +1,5 @@
+[allow.dnf]
+sub = ["list", "info", "search", "provides", "repolist"]
+
+[allow.yum]
+sub = ["list", "info", "search", "provides", "repolist"]

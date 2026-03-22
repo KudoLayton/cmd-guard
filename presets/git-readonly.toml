@@ -1,0 +1,2 @@
+[allow.git]
+sub = ["diff", "log", "status", "branch", "show", "remote", "tag", "blame", "shortlog", "describe", "ls-files", "ls-tree", "rev-parse", "config", "reflog", "stash"]

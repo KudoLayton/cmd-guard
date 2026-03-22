@@ -1,0 +1,2 @@
+[allow.go]
+sub = ["version", "list", "env", "doc", "vet"]

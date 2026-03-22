@@ -1,0 +1,2 @@
+[allow.rustup]
+sub = ["show", "default", "toolchain list", "target list", "component list"]

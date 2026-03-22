@@ -86,6 +86,8 @@ impl fmt::Display for ParsedCommand {
 #[derive(Debug, Deserialize, Default)]
 pub struct AllowlistConfig {
     #[serde(default)]
+    pub presets: Vec<String>,
+    #[serde(default)]
     pub allow: HashMap<String, AllowEntry>,
 }
 

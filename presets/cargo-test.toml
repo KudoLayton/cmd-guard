@@ -1,0 +1,2 @@
+[allow.cargo]
+sub = ["test", "bench"]

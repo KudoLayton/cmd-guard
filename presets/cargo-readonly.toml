@@ -1,0 +1,2 @@
+[allow.cargo]
+sub = ["metadata", "tree", "search", "verify-project", "version"]

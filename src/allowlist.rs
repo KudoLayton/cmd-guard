@@ -3,27 +3,55 @@ use std::path::PathBuf;
 
 use regex::Regex;
 
+use crate::preset;
 use crate::types::{AllowEntry, AllowlistConfig, ParsedCommand};
 
 /// Load and merge allowlist configs from both locations:
-/// - User `~/.claude/cmd-guard.toml` (global base)
-/// - Project `.claude/cmd-guard.toml` (project override/restriction)
+/// - User `~/.claude/cmd-guard/config.toml` (new) or `~/.claude/cmd-guard.toml` (legacy)
+/// - Project `.claude/cmd-guard/config.toml` (new) or `.claude/cmd-guard.toml` (legacy)
 ///
 /// Merge strategy: field-level union for overlapping command keys.
-/// `deny_sub` allows project config to block subcommands allowed by user config.
+/// After merging, presets are applied as the base layer.
 pub fn load_config() -> AllowlistConfig {
     let (project_path, user_path) = config_paths();
     let project = load_from_path(project_path);
     let user = load_from_path(user_path);
-    merge_configs(project, user)
+    let mut merged = merge_configs(project, user);
+    preset::apply_presets(&mut merged);
+    merged
 }
 
 fn config_paths() -> (Option<PathBuf>, Option<PathBuf>) {
-    let project = std::env::current_dir()
-        .ok()
-        .map(|cwd| cwd.join(".claude").join("cmd-guard.toml"));
-    let user = dirs::home_dir().map(|home| home.join(".claude").join("cmd-guard.toml"));
+    let project = std::env::current_dir().ok().and_then(|cwd| {
+        let new_path = cwd.join(".claude").join("cmd-guard").join("config.toml");
+        let legacy_path = cwd.join(".claude").join("cmd-guard.toml");
+        resolve_config_path(new_path, legacy_path)
+    });
+
+    let user = dirs::home_dir().and_then(|home| {
+        let new_path = home.join(".claude").join("cmd-guard").join("config.toml");
+        let legacy_path = home.join(".claude").join("cmd-guard.toml");
+        resolve_config_path(new_path, legacy_path)
+    });
+
     (project, user)
+}
+
+fn resolve_config_path(new_path: PathBuf, legacy_path: PathBuf) -> Option<PathBuf> {
+    if new_path.exists() {
+        return Some(new_path);
+    }
+    if legacy_path.exists() {
+        eprintln!(
+            "[cmd-guard] Deprecated config path: {}\n\
+             {: >12}Please move to: {}",
+            legacy_path.display(),
+            "",
+            new_path.display()
+        );
+        return Some(legacy_path);
+    }
+    None
 }
 
 fn load_from_path(path: Option<PathBuf>) -> Option<AllowlistConfig> {
@@ -51,12 +79,17 @@ fn merge_configs(
                 };
                 merged.insert(key.clone(), entry);
             }
-            AllowlistConfig { allow: merged }
+            // Union merge presets from both configs
+            let presets = union(&project.presets, &user.presets);
+            AllowlistConfig {
+                presets,
+                allow: merged,
+            }
         }
     }
 }
 
-fn merge_entries(a: &AllowEntry, b: &AllowEntry) -> AllowEntry {
+pub(crate) fn merge_entries(a: &AllowEntry, b: &AllowEntry) -> AllowEntry {
     AllowEntry {
         sub: union(&a.sub, &b.sub),
         deny_sub: union(&a.deny_sub, &b.deny_sub),
@@ -90,6 +123,19 @@ pub fn check_commands(
     }
 }
 
+/// Check if args start with the words of a multi-word sub entry (case-insensitive).
+/// e.g. sub="pr list", args=["pr", "list", "--json"] → true
+fn args_match_sub(sub_entry: &str, args: &[String]) -> bool {
+    let words: Vec<&str> = sub_entry.split_whitespace().collect();
+    if words.len() > args.len() {
+        return false;
+    }
+    words
+        .iter()
+        .zip(args.iter())
+        .all(|(w, a)| w.eq_ignore_ascii_case(a))
+}
+
 fn is_not_allowed(cmd: &ParsedCommand, config: &AllowlistConfig) -> Option<String> {
     let Some(entry) = find_entry(cmd, config) else {
         return Some(cmd.to_string());
@@ -106,15 +152,14 @@ fn is_not_allowed(cmd: &ParsedCommand, config: &AllowlistConfig) -> Option<Strin
         }
     }
 
-    // deny_sub blocks specific subcommands even if listed in sub
-    if let Some(first_arg) = cmd.args.first() {
-        if entry
+    // deny_sub blocks specific subcommands (supports multi-word)
+    if !cmd.args.is_empty()
+        && entry
             .deny_sub
             .iter()
-            .any(|s| s.eq_ignore_ascii_case(first_arg))
-        {
-            return Some(format!("{} (denied sub)", cmd));
-        }
+            .any(|s| args_match_sub(s, &cmd.args))
+    {
+        return Some(format!("{} (denied sub)", cmd));
     }
 
     // Empty sub = all subcommands allowed
@@ -122,16 +167,12 @@ fn is_not_allowed(cmd: &ParsedCommand, config: &AllowlistConfig) -> Option<Strin
         return None;
     }
 
-    // Check first arg against allowed subcommands
-    let Some(first_arg) = cmd.args.first() else {
+    // Check args against allowed subcommands (supports multi-word)
+    if cmd.args.is_empty() {
         return Some(cmd.to_string());
-    };
+    }
 
-    if entry
-        .sub
-        .iter()
-        .any(|s| s.eq_ignore_ascii_case(first_arg))
-    {
+    if entry.sub.iter().any(|s| args_match_sub(s, &cmd.args)) {
         None
     } else {
         Some(cmd.to_string())
@@ -319,6 +360,84 @@ deny_pattern = ['install\s.*--global', 'install\s.*-g']
         assert!(ls.deny_pattern.is_empty());
     }
 
+    // --- multi-word sub tests ---
+
+    #[test]
+    fn multi_word_sub_allowed() {
+        let c = parse_config(
+            r#"
+[allow.gh]
+sub = ["pr list", "pr view", "issue list"]
+"#,
+        );
+        assert!(check_commands(&[cmd("gh", &["pr", "list", "--json"])], &c).is_none());
+        assert!(check_commands(&[cmd("gh", &["pr", "view", "123"])], &c).is_none());
+        assert!(check_commands(&[cmd("gh", &["issue", "list"])], &c).is_none());
+    }
+
+    #[test]
+    fn multi_word_sub_denied() {
+        let c = parse_config(
+            r#"
+[allow.gh]
+sub = ["pr list", "pr view"]
+"#,
+        );
+        let denied = check_commands(&[cmd("gh", &["pr", "create"])], &c).unwrap();
+        assert_eq!(denied, vec!["gh pr"]);
+    }
+
+    #[test]
+    fn multi_word_deny_sub() {
+        let c = parse_config(
+            r#"
+[allow.docker]
+sub = ["network ls", "network inspect", "network create"]
+deny_sub = ["network create"]
+"#,
+        );
+        assert!(check_commands(&[cmd("docker", &["network", "ls"])], &c).is_none());
+        let denied =
+            check_commands(&[cmd("docker", &["network", "create", "mynet"])], &c).unwrap();
+        assert!(denied[0].contains("denied sub"));
+    }
+
+    #[test]
+    fn single_word_sub_still_works() {
+        let c = parse_config(
+            r#"
+[allow.git]
+sub = ["diff", "log"]
+"#,
+        );
+        assert!(check_commands(&[cmd("git", &["diff", "--stat"])], &c).is_none());
+        assert!(check_commands(&[cmd("git", &["log"])], &c).is_none());
+        assert!(check_commands(&[cmd("git", &["push"])], &c).is_some());
+    }
+
+    #[test]
+    fn multi_word_sub_case_insensitive() {
+        let c = parse_config(
+            r#"
+[allow.gh]
+sub = ["PR List"]
+"#,
+        );
+        assert!(check_commands(&[cmd("gh", &["pr", "list"])], &c).is_none());
+    }
+
+    #[test]
+    fn multi_word_sub_too_few_args() {
+        let c = parse_config(
+            r#"
+[allow.gh]
+sub = ["pr list"]
+"#,
+        );
+        let denied = check_commands(&[cmd("gh", &["pr"])], &c).unwrap();
+        assert_eq!(denied, vec!["gh pr"]);
+    }
+
     // --- merge_configs tests ---
 
     fn parse_config(toml_str: &str) -> AllowlistConfig {
@@ -425,5 +544,22 @@ deny_pattern = ['install\s.*--global', 'install\s.*-g']
         let c = parse_config("[allow.git]\nsub = [\"Push\"]\ndeny_sub = [\"push\"]\n");
         let denied = check_commands(&[cmd("git", &["PUSH"])], &c).unwrap();
         assert!(denied[0].contains("denied sub"));
+    }
+
+    #[test]
+    fn merge_presets_union() {
+        let project = parse_config("presets = [\"bash-readonly\"]\n[allow.ls]\n");
+        let user = parse_config("presets = [\"git-readonly\"]\n[allow.cargo]\n");
+        let result = merge_configs(Some(project), Some(user));
+        assert!(result.presets.contains(&"bash-readonly".to_string()));
+        assert!(result.presets.contains(&"git-readonly".to_string()));
+    }
+
+    #[test]
+    fn presets_deserialization() {
+        let c: AllowlistConfig =
+            toml::from_str("presets = [\"bash-readonly\", \"git-readonly\"]\n").unwrap();
+        assert_eq!(c.presets.len(), 2);
+        assert!(c.presets.contains(&"bash-readonly".to_string()));
     }
 }

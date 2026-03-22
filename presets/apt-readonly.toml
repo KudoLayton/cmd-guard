@@ -1,0 +1,8 @@
+[allow.apt]
+sub = ["list", "show", "search"]
+
+[allow.apt-cache]
+sub = ["search", "show", "depends", "policy"]
+
+[allow.dpkg]
+sub = ["-l", "-L", "-s"]

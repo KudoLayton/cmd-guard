@@ -1,0 +1,2 @@
+[allow.podman]
+sub = ["ps", "images", "logs", "inspect", "info", "version", "stats", "top", "port", "network ls", "network inspect", "volume ls", "volume inspect"]

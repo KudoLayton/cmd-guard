@@ -1,0 +1,2 @@
+[allow.yarn]
+sub = ["test"]

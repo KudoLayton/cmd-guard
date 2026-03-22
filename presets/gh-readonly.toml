@@ -1,0 +1,8 @@
+[allow.gh]
+sub = [
+    "pr list", "pr view", "pr status", "pr checks", "pr diff",
+    "issue list", "issue view", "issue status",
+    "repo view", "repo list", "repo clone",
+    "run list", "run view",
+    "release list", "release view",
+]

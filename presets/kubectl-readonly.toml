@@ -1,0 +1,2 @@
+[allow.kubectl]
+sub = ["get", "describe", "logs", "top", "api-resources", "api-versions", "explain", "cluster-info"]

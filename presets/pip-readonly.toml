@@ -1,0 +1,5 @@
+[allow.pip]
+sub = ["list", "show", "check", "freeze", "config"]
+
+[allow.pip3]
+sub = ["list", "show", "check", "freeze", "config"]

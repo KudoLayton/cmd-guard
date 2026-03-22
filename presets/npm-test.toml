@@ -1,0 +1,2 @@
+[allow.npm]
+sub = ["test"]

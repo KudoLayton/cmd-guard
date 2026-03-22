@@ -1,0 +1,2 @@
+[allow.cargo]
+sub = ["build", "check", "clippy", "doc"]

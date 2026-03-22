@@ -1,0 +1,2 @@
+[allow.git]
+sub = ["fetch", "pull", "clone"]

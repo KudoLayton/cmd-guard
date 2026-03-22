@@ -1,0 +1,2 @@
+[allow.brew]
+sub = ["list", "info", "search", "deps", "leaves", "outdated"]

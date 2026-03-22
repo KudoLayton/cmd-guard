@@ -1,0 +1,2 @@
+[allow.go]
+sub = ["build", "install", "get", "mod"]

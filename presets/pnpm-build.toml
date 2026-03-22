@@ -1,0 +1,2 @@
+[allow.pnpm]
+sub = ["install", "run"]

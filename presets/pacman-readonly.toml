@@ -1,0 +1,2 @@
+[allow.pacman]
+sub = ["-Q", "-Qi", "-Ql", "-Qs", "-Si", "-Ss"]

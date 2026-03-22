@@ -1,71 +1,37 @@
 # cmd-guard allowlist configuration
-# Place at ~/.claude/cmd-guard.toml (user) or .claude/cmd-guard.toml (project)
+# Place at ~/.claude/cmd-guard/config.toml (user) or .claude/cmd-guard/config.toml (project)
+# Legacy paths (~/.claude/cmd-guard.toml, .claude/cmd-guard.toml) are also supported
+
+# --- Presets ---
+# Use presets to bulk-allow common read-only commands.
+# Run `cmd-guard --help` to see all available presets.
+presets = [
+    "bash-readonly",    # bash builtins + coreutils
+    "nu-readonly",      # nushell builtins + nu launcher
+    "ps-readonly",      # PowerShell read-only cmdlets + pwsh launcher
+    "git-readonly",     # git diff, log, status, etc.
+    "cargo-readonly",   # cargo metadata, tree, etc.
+    "cargo-build",      # cargo build, check, clippy, doc
+    "cargo-test",       # cargo test, bench
+]
+
+# --- Custom allow rules ---
+# These are merged on top of presets (field-level union).
 
 # Simple commands — all arguments allowed
-[allow.ls]
-[allow.cat]
-[allow.head]
-[allow.tail]
-[allow.wc]
-[allow.sort]
-[allow.uniq]
-[allow.grep]
-[allow.rg]
-[allow.find]
-[allow.fd]
-[allow.echo]
-[allow.printf]
-[allow.cd]
-[allow.pwd]
-[allow.which]
-[allow.type]
-[allow.mkdir]
-[allow.touch]
-[allow.cp]
-[allow.mv]
 [allow.jq]
 [allow.curl]
-[allow.wget]
-[allow.python]
-[allow.python3]
-[allow.pip]
-[allow.cargo]
-[allow.rustc]
-[allow.test]
-[allow.true]
-[allow.false]
-[allow.set]
-[allow.export]
-[allow.env]
-[allow.tee]
-[allow.xargs]
-[allow.tr]
-[allow.sed]
-[allow.awk]
-[allow.basename]
-[allow.dirname]
-[allow.realpath]
-[allow.date]
-[allow.whoami]
-[allow.hostname]
-[allow.node]
-[allow.npx]
+[allow.rg]
+[allow.fd]
 
-# Shell launchers — allow all (inner commands parsed via 2-stage)
-[allow."nu"]
-[allow."nu.exe"]
-[allow."pwsh"]
-[allow."pwsh.exe"]
-[allow."powershell"]
-[allow."powershell.exe"]
-[allow."cmd"]
-[allow."cmd.exe"]
-
-# Subcommand-restricted commands
+# Subcommand-restricted with deny patterns
 [allow.git]
-sub = ["diff", "log", "status", "branch", "show", "remote", "fetch", "stash", "tag", "push"]
 deny_pattern = ['push\s.*--force', 'push\s.*-f']
 
 [allow.npm]
 sub = ["install", "run", "test", "ci", "ls"]
 deny_pattern = ['install\s.*--global', 'install\s.*-g']
+
+# Multi-word subcommands
+# [allow.docker]
+# sub = ["ps", "images", "logs", "network ls", "volume ls"]

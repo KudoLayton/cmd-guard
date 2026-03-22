@@ -1,0 +1,2 @@
+[allow.choco]
+sub = ["list", "info", "search", "outdated"]
